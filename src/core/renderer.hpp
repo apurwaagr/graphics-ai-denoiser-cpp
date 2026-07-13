@@ -24,7 +24,7 @@ struct Image {
 
 class Renderer {
 public:
-    Image renderNoisy(int width, int height, int spp, uint32_t seed = 42U) const;
+    Image renderNoisy(int width, int height, int spp, uint32_t seed = 42U, int threadCount = 0) const;
     bool writePPM(const Image &image, const std::string &path) const;
 };
 

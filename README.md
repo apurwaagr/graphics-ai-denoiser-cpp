@@ -65,7 +65,7 @@ The executable writes:
 You can pass optional arguments:
 
 ```powershell
-.\graphics_ai_demo.exe [width height spp] [--wait]
+.\graphics_ai_demo.exe [width height spp] [--threads N] [--radius N] [--seed N] [--benchmark] [--ref-mult N] [--wait]
 ```
 
 Examples:
@@ -73,10 +73,13 @@ Examples:
 ```powershell
 .\graphics_ai_demo.exe
 .\graphics_ai_demo.exe 1024 1024 32
+.\graphics_ai_demo.exe 1024 1024 32 --threads 8 --benchmark
 .\graphics_ai_demo.exe 1024 1024 32 --wait
 ```
 
 `--wait` keeps the console open until you press Enter (useful when running by double-click).
+
+`--benchmark` renders a higher-spp reference image and prints PSNR metrics to quantify denoising quality.
 
 ## Test
 

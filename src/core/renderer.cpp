@@ -5,6 +5,8 @@
 #include <fstream>
 #include <limits>
 #include <random>
+#include <thread>
+#include <vector>
 
 namespace gfx {
 
@@ -164,6 +166,20 @@ RGB tracePath(Ray ray, const std::vector<Sphere> &scene, int maxBounces, std::mt
     return radiance;
 }
 
+inline int resolveThreadCount(int requested, int maxWorkItems) {
+    if (maxWorkItems <= 0) {
+        return 1;
+    }
+
+    if (requested > 0) {
+        return std::max(1, std::min(requested, maxWorkItems));
+    }
+
+    const unsigned int hw = std::thread::hardware_concurrency();
+    const int fallback = (hw == 0U) ? 4 : static_cast<int>(hw);
+    return std::max(1, std::min(fallback, maxWorkItems));
+}
+
 }  // namespace
 
 Image::Image(int w, int h) : width(w), height(h), pixels(static_cast<size_t>(w * h)) {}
@@ -176,10 +192,8 @@ const RGB &Image::at(int x, int y) const {
     return pixels[static_cast<size_t>(y * width + x)];
 }
 
-Image Renderer::renderNoisy(int width, int height, int spp, uint32_t seed) const {
+Image Renderer::renderNoisy(int width, int height, int spp, uint32_t seed, int threadCount) const {
     Image img(width, height);
-    std::mt19937 rng(seed);
-    std::uniform_real_distribution<float> jitter(0.0f, 1.0f);
 
     const std::vector<Sphere> scene = {
         Sphere{makeVec3(0.0f, -1001.0f, 0.0f), 1000.0f, RGB{0.85f, 0.85f, 0.85f}},
@@ -191,29 +205,51 @@ Image Renderer::renderNoisy(int width, int height, int spp, uint32_t seed) const
     const Vec3 camPos = makeVec3(0.0f, 0.2f, 1.8f);
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
     constexpr int kMaxBounces = 3;
+    const int workers = resolveThreadCount(threadCount, height);
+    const int rowsPerWorker = (height + workers - 1) / workers;
 
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            float r = 0.0f;
-            float g = 0.0f;
-            float b = 0.0f;
+    std::vector<std::thread> threads;
+    threads.reserve(static_cast<size_t>(workers));
 
-            for (int s = 0; s < spp; ++s) {
-                const float fx = (static_cast<float>(x) + jitter(rng)) / static_cast<float>(width);
-                const float fy = (static_cast<float>(y) + jitter(rng)) / static_cast<float>(height);
-
-                const float px = (2.0f * fx - 1.0f) * aspect;
-                const float py = (1.0f - 2.0f * fy);
-                Ray ray{camPos, normalize(makeVec3(px * 1.05f, py * 0.85f, -1.7f))};
-
-                const RGB c = tracePath(ray, scene, kMaxBounces, rng);
-                r += clamp01(c.r);
-                g += clamp01(c.g);
-                b += clamp01(c.b);
-            }
-
-            img.at(x, y) = RGB{r / spp, g / spp, b / spp};
+    for (int worker = 0; worker < workers; ++worker) {
+        const int yStart = worker * rowsPerWorker;
+        const int yEnd = std::min(height, yStart + rowsPerWorker);
+        if (yStart >= yEnd) {
+            continue;
         }
+
+        threads.emplace_back([&, worker, yStart, yEnd]() {
+            std::mt19937 rng(seed + static_cast<uint32_t>(worker * 7919));
+            std::uniform_real_distribution<float> jitter(0.0f, 1.0f);
+
+            for (int y = yStart; y < yEnd; ++y) {
+                for (int x = 0; x < width; ++x) {
+                    float r = 0.0f;
+                    float g = 0.0f;
+                    float b = 0.0f;
+
+                    for (int s = 0; s < spp; ++s) {
+                        const float fx = (static_cast<float>(x) + jitter(rng)) / static_cast<float>(width);
+                        const float fy = (static_cast<float>(y) + jitter(rng)) / static_cast<float>(height);
+
+                        const float px = (2.0f * fx - 1.0f) * aspect;
+                        const float py = (1.0f - 2.0f * fy);
+                        Ray ray{camPos, normalize(makeVec3(px * 1.05f, py * 0.85f, -1.7f))};
+
+                        const RGB c = tracePath(ray, scene, kMaxBounces, rng);
+                        r += clamp01(c.r);
+                        g += clamp01(c.g);
+                        b += clamp01(c.b);
+                    }
+
+                    img.at(x, y) = RGB{r / spp, g / spp, b / spp};
+                }
+            }
+        });
+    }
+
+    for (auto &t : threads) {
+        t.join();
     }
 
     return img;
